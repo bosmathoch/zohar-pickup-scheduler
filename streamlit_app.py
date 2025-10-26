@@ -167,9 +167,12 @@ def save_data(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def get_week_start(week_offset=0):
-    """קבלת תחילת שבוע"""
+    """קבלת תחילת שבוע - מיום ראשון"""
     today = datetime.now()
-    week_start = today - timedelta(days=today.weekday())
+    # isoweekday: 1=Monday, 7=Sunday
+    # We want: 0=Sunday, 1=Monday, ..., 6=Saturday
+    days_since_sunday = (today.isoweekday()) % 7
+    week_start = today - timedelta(days=days_since_sunday)
     week_start = week_start + timedelta(weeks=week_offset)
     return week_start.strftime('%Y-%m-%d')
 
@@ -391,20 +394,14 @@ st.markdown("### 📅 לוח השבוע")
 
 days = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי']
 
-# Display days in grid (RTL: right to left)
-# Create columns - Streamlit creates them left to right by default
+# Display days in grid
 cols = st.columns(5)
 
-# To show Sunday(0) on the RIGHT and Friday(4) on the LEFT in RTL:
-# We need to reverse the iteration order
-day_indices = [0, 1, 2, 3, 4]  # Sunday=0, Monday=1, ..., Friday=4
-
-for display_position, day_index in enumerate(day_indices):
-    # For RTL display: position 0 should appear on the right (column 4)
-    # position 4 should appear on the left (column 0)
-    col_index = 4 - display_position
-    
-    with cols[col_index]:
+# Display days 0-4 (Sunday to Friday) in columns 0-4
+# On desktop: appears left-to-right
+# On mobile: appears top-to-bottom in order
+for day_index in range(5):
+    with cols[day_index]:
         day_date = get_date_for_day(current_week, day_index)
         week_day_key = f"{current_week}_{day_index}"
         assigned = schedule.get(week_day_key)
