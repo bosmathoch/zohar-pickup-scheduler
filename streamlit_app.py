@@ -101,6 +101,7 @@ st.markdown("""
         font-size: 1.3rem;
         font-weight: bold;
         margin-bottom: 0.3rem;
+        color: #1e293b;
     }
     
     .day-date {
