@@ -3,6 +3,14 @@ import json
 import os
 from datetime import datetime, timedelta
 import urllib.parse
+import requests
+
+# EmailJS Configuration
+EMAILJS_PUBLIC_KEY = "rkn_Eu9Eg6GHpuFyA"
+EMAILJS_SERVICE_ID = "zH7BloiZLJeauazrkPcez"
+EMAILJS_TEMPLATE_ID = "template_gbl91eh"
+ADMIN_EMAIL = "bosmathoch@gmail.com"
+APP_URL = "https://your-app.streamlit.app"  # עדכני את זה לקישור האמיתי אחרי הפריסה
 
 # Page config
 st.set_page_config(
@@ -187,6 +195,33 @@ def send_whatsapp(person, day_name):
     
     return url
 
+def send_email_notification(person_name, day_name, day_date, week_summary=""):
+    """שליחת התראת אימייל כשמישהו משבץ עצמו"""
+    try:
+        email_data = {
+            "service_id": EMAILJS_SERVICE_ID,
+            "template_id": EMAILJS_TEMPLATE_ID,
+            "user_id": EMAILJS_PUBLIC_KEY,
+            "template_params": {
+                "person_name": person_name,
+                "day_name": day_name,
+                "day_date": day_date,
+                "app_url": APP_URL,
+                "to_email": ADMIN_EMAIL
+            }
+        }
+        
+        response = requests.post(
+            "https://api.emailjs.com/api/v1.0/email/send",
+            json=email_data,
+            headers={"Content-Type": "application/json"}
+        )
+        
+        return response.status_code == 200
+    except Exception as e:
+        st.error(f"שגיאה בשליחת אימייל: {str(e)}")
+        return False
+
 # Initialize session state
 if 'week_offset' not in st.session_state:
     st.session_state.week_offset = 0
@@ -218,6 +253,25 @@ current_week = get_week_start(st.session_state.week_offset)
 st.markdown("# מי מבלה עם זוהר היום 👦")
 st.markdown('<div class="subtitle">שעות: 15:30 - 18:00 | ימים א\'-ה\'</div>', unsafe_allow_html=True)
 
+# Check for empty days and show alert
+days = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי']
+empty_days = []
+for i in range(5):
+    week_day_key = f"{current_week}_{i}"
+    if week_day_key not in schedule:
+        empty_days.append(days[i])
+
+if empty_days:
+    if len(empty_days) == 5:
+        st.error("⚠️ **שימו לב!** כל השבוע עדיין פנוי - צריך לשבץ!")
+    elif len(empty_days) == 1:
+        st.warning(f"⚠️ **שימו לב!** יום **{empty_days[0]}** עדיין פנוי")
+    else:
+        empty_list = ", ".join(empty_days)
+        st.warning(f"⚠️ **שימו לב!** **{len(empty_days)} ימים** עדיין פנויים: {empty_list}")
+else:
+    st.success("✅ מעולה! כל השבוע מאויש!")
+
 # Week navigation
 col_prev, col_week, col_next = st.columns([1, 3, 1])
 
@@ -233,6 +287,23 @@ with col_next:
     if st.button("שבוע הבא ▶", use_container_width=True):
         st.session_state.week_offset += 1
         st.rerun()
+
+# Quick status summary
+col_status1, col_status2, col_status3 = st.columns(3)
+assigned_count = len([i for i in range(5) if f"{current_week}_{i}" in schedule])
+empty_count = 5 - assigned_count
+
+with col_status1:
+    st.metric("ימים מאוישים", f"{assigned_count}/5")
+with col_status2:
+    st.metric("ימים פנויים", empty_count)
+with col_status3:
+    if empty_count == 0:
+        st.metric("סטטוס", "✅ מלא")
+    elif empty_count <= 2:
+        st.metric("סטטוס", "⚠️ חסר")
+    else:
+        st.metric("סטטוס", "❌ ריק")
 
 # People management (admin only)
 with st.expander("👨‍👩‍👧 ניהול אנשים (מנהל בלבד)", expanded=st.session_state.show_people_section):
@@ -300,11 +371,16 @@ st.markdown("### 📅 לוח השבוע")
 days = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי']
 
 # Display days in grid (RTL: right to left)
+# Create columns in reverse order for proper RTL display
 cols = st.columns(5)
 
-for i in range(5):
-    # RTL: display from right to left (4-i)
-    with cols[4-i]:
+# Display in reverse order: Sunday(0) in rightmost column, Friday(4) in leftmost
+day_order = [0, 1, 2, 3, 4]  # Sunday to Friday
+
+for idx, i in enumerate(day_order):
+    # Place day i in column position (4-idx) for RTL
+    col_position = 4 - idx
+    with cols[col_position]:
         day_date = get_date_for_day(current_week, i)
         week_day_key = f"{current_week}_{i}"
         assigned = schedule.get(week_day_key)
@@ -338,7 +414,14 @@ for i in range(5):
                     schedule[week_day_key] = person
                     data['schedule'] = schedule
                     save_data(data)
-                    st.success(f"{selected} משובץ ליום {days[i]}!")
+                    
+                    # Send email notification
+                    day_date_str = get_date_for_day(current_week, i)
+                    if send_email_notification(selected, days[i], day_date_str):
+                        st.success(f"✅ {selected} משובץ ליום {days[i]}! (אימייל נשלח)")
+                    else:
+                        st.success(f"✅ {selected} משובץ ליום {days[i]}!")
+                    
                     st.rerun()
             else:
                 st.warning("אין אנשים ברשימה")
