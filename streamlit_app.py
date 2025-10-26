@@ -6,7 +6,7 @@ import urllib.parse
 
 # Page config
 st.set_page_config(
-    page_title="מי לוקח את זוהר היום?",
+    page_title="מי מבלה עם זוהר היום?",
     page_icon="👦",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -132,7 +132,7 @@ st.markdown("""
 
 # Data file
 DATA_FILE = 'pickup_data.json'
-ADMIN_PASSWORD = "zohar2024"  # שני את הסיסמה כאן
+ADMIN_PASSWORD = "1234"  # שני את הסיסמה כאן
 
 def load_data():
     """טעינת נתונים מהקובץ"""
@@ -197,6 +197,15 @@ if 'admin_mode' not in st.session_state:
 if 'show_people_section' not in st.session_state:
     st.session_state.show_people_section = False
 
+# Auto-reset to current week if it's a new day
+if 'last_check_date' not in st.session_state:
+    st.session_state.last_check_date = datetime.now().date()
+    st.session_state.week_offset = 0
+elif st.session_state.last_check_date != datetime.now().date():
+    # New day - reset to current week
+    st.session_state.last_check_date = datetime.now().date()
+    st.session_state.week_offset = 0
+
 # Load data
 data = load_data()
 people = data.get('people', [])
@@ -206,7 +215,7 @@ schedule = data.get('schedule', {})
 current_week = get_week_start(st.session_state.week_offset)
 
 # Header
-st.markdown("# מי לוקח את זוהר היום? 👦")
+st.markdown("# מי מבלה עם זוהר היום 👦")
 st.markdown('<div class="subtitle">שעות: 15:30 - 18:00 | ימים א\'-ה\'</div>', unsafe_allow_html=True)
 
 # Week navigation
