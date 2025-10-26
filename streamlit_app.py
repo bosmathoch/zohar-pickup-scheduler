@@ -5,10 +5,8 @@ from datetime import datetime, timedelta
 import urllib.parse
 import requests
 
-# EmailJS Configuration
-EMAILJS_PUBLIC_KEY = "rkn_Eu9Eg6GHpuFyA"
-EMAILJS_SERVICE_ID = "zH7BloiZLJeauazrkPcez"
-EMAILJS_TEMPLATE_ID = "template_gbl91eh"
+# Make.com Webhook Configuration
+MAKE_WEBHOOK_URL = "https://hook.eu2.make.com/38ekodxsv5ki9alwa76zyhfsuzb8u56p"
 ADMIN_EMAIL = "bosmathoch@gmail.com"
 APP_URL = "https://your-app.streamlit.app"  # עדכני את זה לקישור האמיתי אחרי הפריסה
 
@@ -207,27 +205,23 @@ def send_whatsapp(person, day_name):
     return url
 
 def send_email_notification(person_name, day_name, day_date, week_summary=""):
-    """שליחת התראת אימייל כשמישהו משבץ עצמו"""
+    """שליחת התראת אימייל כשמישהו משבץ עצמו - דרך Make.com"""
     try:
-        email_data = {
-            "service_id": EMAILJS_SERVICE_ID,
-            "template_id": EMAILJS_TEMPLATE_ID,
-            "user_id": EMAILJS_PUBLIC_KEY,
-            "template_params": {
-                "person_name": person_name,
-                "day_name": day_name,
-                "day_date": day_date,
-                "app_url": APP_URL,
-                "to_email": ADMIN_EMAIL
-            }
+        # Send data to Make.com webhook
+        webhook_data = {
+            "person_name": person_name,
+            "day_name": day_name,
+            "day_date": day_date,
+            "app_url": APP_URL,
+            "to_email": ADMIN_EMAIL
         }
         
         # Debug info
         st.info(f"🔄 מנסה לשלוח אימייל ל-{ADMIN_EMAIL}...")
         
         response = requests.post(
-            "https://api.emailjs.com/api/v1.0/email/send",
-            json=email_data,
+            MAKE_WEBHOOK_URL,
+            json=webhook_data,
             headers={"Content-Type": "application/json"},
             timeout=10
         )
@@ -237,7 +231,6 @@ def send_email_notification(person_name, day_name, day_date, week_summary=""):
             return True
         else:
             st.warning(f"⚠️ אימייל לא נשלח (קוד: {response.status_code}). השיבוץ נשמר בכל זאת.")
-            st.write(f"תגובת השרת: {response.text[:200]}")
             return False
             
     except requests.exceptions.Timeout:
