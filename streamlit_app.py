@@ -222,6 +222,9 @@ def send_email_notification(person_name, day_name, day_date, week_summary=""):
             }
         }
         
+        # Debug info
+        st.info(f"🔄 מנסה לשלוח אימייל ל-{ADMIN_EMAIL}...")
+        
         response = requests.post(
             "https://api.emailjs.com/api/v1.0/email/send",
             json=email_data,
@@ -230,16 +233,21 @@ def send_email_notification(person_name, day_name, day_date, week_summary=""):
         )
         
         if response.status_code == 200:
+            st.success("✅ אימייל נשלח בהצלחה!")
             return True
         else:
             st.warning(f"⚠️ אימייל לא נשלח (קוד: {response.status_code}). השיבוץ נשמר בכל זאת.")
+            st.write(f"תגובת השרת: {response.text[:200]}")
             return False
             
     except requests.exceptions.Timeout:
-        st.warning("⚠️ זמן תפוגה בשליחת אימייל. השיבוץ נשמר בכל זאת.")
+        st.warning("⚠️ זמן תפוגה בשליחת אימייל (10 שניות). השיבוץ נשמר בכל זאת.")
+        return False
+    except requests.exceptions.RequestException as e:
+        st.warning(f"⚠️ שגיאת רשת: {str(e)[:100]}. השיבוץ נשמר בכל זאת.")
         return False
     except Exception as e:
-        st.warning(f"⚠️ לא ניתן לשלוח אימייל כרגע: {str(e)[:50]}... השיבוץ נשמר בכל זאת.")
+        st.warning(f"⚠️ שגיאה כללית: {str(e)[:100]}. השיבוץ נשמר בכל זאת.")
         return False
 
 # Initialize session state
