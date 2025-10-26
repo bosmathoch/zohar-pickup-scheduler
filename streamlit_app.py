@@ -29,6 +29,17 @@ st.markdown("""
         text-align: right;
     }
     
+    /* Force RTL column order on mobile */
+    [data-testid="column"] {
+        direction: rtl !important;
+    }
+    
+    div[data-testid="stHorizontalBlock"] {
+        direction: rtl !important;
+        display: flex !important;
+        flex-direction: row-reverse !important;
+    }
+    
     /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
@@ -214,12 +225,21 @@ def send_email_notification(person_name, day_name, day_date, week_summary=""):
         response = requests.post(
             "https://api.emailjs.com/api/v1.0/email/send",
             json=email_data,
-            headers={"Content-Type": "application/json"}
+            headers={"Content-Type": "application/json"},
+            timeout=10
         )
         
-        return response.status_code == 200
+        if response.status_code == 200:
+            return True
+        else:
+            st.warning(f"⚠️ אימייל לא נשלח (קוד: {response.status_code}). השיבוץ נשמר בכל זאת.")
+            return False
+            
+    except requests.exceptions.Timeout:
+        st.warning("⚠️ זמן תפוגה בשליחת אימייל. השיבוץ נשמר בכל זאת.")
+        return False
     except Exception as e:
-        st.error(f"שגיאה בשליחת אימייל: {str(e)}")
+        st.warning(f"⚠️ לא ניתן לשלוח אימייל כרגע: {str(e)[:50]}... השיבוץ נשמר בכל זאת.")
         return False
 
 # Initialize session state
@@ -371,18 +391,21 @@ st.markdown("### 📅 לוח השבוע")
 days = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי']
 
 # Display days in grid (RTL: right to left)
-# Create columns in reverse order for proper RTL display
+# Create columns - Streamlit creates them left to right by default
 cols = st.columns(5)
 
-# Display in reverse order: Sunday(0) in rightmost column, Friday(4) in leftmost
-day_order = [0, 1, 2, 3, 4]  # Sunday to Friday
+# To show Sunday(0) on the RIGHT and Friday(4) on the LEFT in RTL:
+# We need to reverse the iteration order
+day_indices = [0, 1, 2, 3, 4]  # Sunday=0, Monday=1, ..., Friday=4
 
-for idx, i in enumerate(day_order):
-    # Place day i in column position (4-idx) for RTL
-    col_position = 4 - idx
-    with cols[col_position]:
-        day_date = get_date_for_day(current_week, i)
-        week_day_key = f"{current_week}_{i}"
+for display_position, day_index in enumerate(day_indices):
+    # For RTL display: position 0 should appear on the right (column 4)
+    # position 4 should appear on the left (column 0)
+    col_index = 4 - display_position
+    
+    with cols[col_index]:
+        day_date = get_date_for_day(current_week, day_index)
+        week_day_key = f"{current_week}_{day_index}"
         assigned = schedule.get(week_day_key)
         is_available = not assigned
         
@@ -392,7 +415,7 @@ for idx, i in enumerate(day_order):
         
         st.markdown(f"""
         <div class="day-card {card_class}">
-            <div class="day-name">{days[i]}</div>
+            <div class="day-name">{days[day_index]}</div>
             <div class="day-date">{day_date}</div>
         </div>
         """, unsafe_allow_html=True)
@@ -405,22 +428,22 @@ for idx, i in enumerate(day_order):
                 selected = st.selectbox(
                     "בחר מי יאסף:",
                     [""] + [p['name'] for p in people],
-                    key=f"select_{i}",
+                    key=f"select_{day_index}",
                     label_visibility="collapsed"
                 )
                 
-                if selected and st.button("✓ שבץ", key=f"assign_{i}", use_container_width=True):
+                if selected and st.button("✓ שבץ", key=f"assign_{day_index}", use_container_width=True):
                     person = next(p for p in people if p['name'] == selected)
                     schedule[week_day_key] = person
                     data['schedule'] = schedule
                     save_data(data)
                     
                     # Send email notification
-                    day_date_str = get_date_for_day(current_week, i)
-                    if send_email_notification(selected, days[i], day_date_str):
-                        st.success(f"✅ {selected} משובץ ליום {days[i]}! (אימייל נשלח)")
+                    day_date_str = get_date_for_day(current_week, day_index)
+                    if send_email_notification(selected, days[day_index], day_date_str):
+                        st.success(f"✅ {selected} משובץ ליום {days[day_index]}! (אימייל נשלח)")
                     else:
-                        st.success(f"✅ {selected} משובץ ליום {days[i]}!")
+                        st.success(f"✅ {selected} משובץ ליום {days[day_index]}!")
                     
                     st.rerun()
             else:
@@ -429,12 +452,12 @@ for idx, i in enumerate(day_order):
             st.markdown(f'<div class="day-status {status_class}">👤 {assigned["name"]}</div>', unsafe_allow_html=True)
             
             # WhatsApp button
-            whatsapp_url = send_whatsapp(assigned, days[i])
+            whatsapp_url = send_whatsapp(assigned, days[day_index])
             st.markdown(f'<a href="{whatsapp_url}" target="_blank"><button style="width:100%; background:#25D366; color:white; border:none; padding:0.5rem; border-radius:8px; cursor:pointer; font-weight:600; margin:0.3rem 0;">📱 שלח תזכורת</button></a>', unsafe_allow_html=True)
             
             # Clear button (admin only)
             if st.session_state.admin_mode:
-                if st.button("ביטול", key=f"clear_{i}", use_container_width=True):
+                if st.button("ביטול", key=f"clear_{day_index}", use_container_width=True):
                     del schedule[week_day_key]
                     data['schedule'] = schedule
                     save_data(data)
