@@ -1,478 +1,343 @@
 import streamlit as st
-import json
-import os
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta
-import urllib.parse
-import requests
+import json
 
-# Make.com Webhook Configuration
-MAKE_WEBHOOK_URL = "https://hook.eu2.make.com/38ekodxsv5ki9alwa76zyhfsuzb8u56p"
-ADMIN_EMAIL = "bosmathoch@gmail.com"
-APP_URL = "https://your-app.streamlit.app"  # עדכני את זה לקישור האמיתי אחרי הפריסה
+# ===========================
+# Google Sheets Configuration
+# ===========================
 
-# Page config
-st.set_page_config(
-    page_title="מי מבלה עם זוהר היום?",
-    page_icon="👦",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
-
-# Custom CSS for modern design
-st.markdown("""
-<style>
-    /* RTL Support */
-    .main {
-        direction: rtl;
-        text-align: right;
-    }
-    
-    /* Force RTL column order on mobile */
-    [data-testid="column"] {
-        direction: rtl !important;
-    }
-    
-    div[data-testid="stHorizontalBlock"] {
-        direction: rtl !important;
-        display: flex !important;
-        flex-direction: row-reverse !important;
-    }
-    
-    /* Hide Streamlit branding */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    
-    /* Modern colors */
-    :root {
-        --primary-color: #6366f1;
-        --success-color: #10b981;
-        --danger-color: #ef4444;
-    }
-    
-    /* Title styling */
-    h1 {
-        color: #6366f1 !important;
-        text-align: center !important;
-        font-size: 2.5rem !important;
-        margin-bottom: 0.5rem !important;
-    }
-    
-    /* Subtitle */
-    .subtitle {
-        text-align: center;
-        color: #64748b;
-        font-size: 1.1rem;
-        margin-bottom: 2rem;
-    }
-    
-    /* Week info */
-    .week-info {
-        background: #f0f4ff;
-        padding: 1rem;
-        border-radius: 10px;
-        text-align: center;
-        font-weight: 600;
-        color: #6366f1;
-        margin-bottom: 2rem;
-    }
-    
-    /* Day cards */
-    .day-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 15px;
-        border: 3px solid #e2e8f0;
-        text-align: center;
-        margin: 0.5rem;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    
-    .day-card.available {
-        background: #d1fae5;
-        border-color: #10b981;
-    }
-    
-    .day-card.taken {
-        background: #fee2e2;
-        border-color: #ef4444;
-    }
-    
-    .day-name {
-        font-size: 1.3rem;
-        font-weight: bold;
-        margin-bottom: 0.3rem;
-        color: #1e293b;
-    }
-    
-    .day-date {
-        color: #64748b;
-        font-size: 0.9rem;
-        margin-bottom: 0.5rem;
-    }
-    
-    .day-status {
-        padding: 0.5rem;
-        border-radius: 8px;
-        font-weight: 600;
-        margin-top: 0.5rem;
-    }
-    
-    .status-available {
-        background: #a7f3d0;
-        color: #065f46;
-    }
-    
-    .status-taken {
-        background: #fecaca;
-        color: #991b1b;
-    }
-    
-    /* Buttons */
-    .stButton>button {
-        width: 100%;
-        border-radius: 8px;
-        font-weight: 600;
-        padding: 0.5rem 1rem;
-    }
-    
-    /* People list */
-    .person-item {
-        background: #f1f5f9;
-        padding: 0.8rem;
-        border-radius: 8px;
-        margin: 0.3rem 0;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Data file
-DATA_FILE = 'pickup_data.json'
-ADMIN_PASSWORD = "1234"  # שני את הסיסמה כאן
-
-def load_data():
-    """טעינת נתונים מהקובץ"""
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return {'people': [], 'schedule': {}}
-    return {'people': [], 'schedule': {}}
-
-def save_data(data):
-    """שמירת נתונים לקובץ"""
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-def get_week_start(week_offset=0):
-    """קבלת תחילת שבוע - מיום ראשון"""
-    today = datetime.now()
-    # isoweekday: 1=Monday, 7=Sunday
-    # We want: 0=Sunday, 1=Monday, ..., 6=Saturday
-    days_since_sunday = (today.isoweekday()) % 7
-    week_start = today - timedelta(days=days_since_sunday)
-    week_start = week_start + timedelta(weeks=week_offset)
-    return week_start.strftime('%Y-%m-%d')
-
-def format_week_range(week_start_str):
-    """עיצוב טווח השבוע"""
-    week_start = datetime.strptime(week_start_str, '%Y-%m-%d')
-    week_end = week_start + timedelta(days=4)
-    return f"שבוע {week_start.strftime('%d/%m/%Y')} - {week_end.strftime('%d/%m/%Y')}"
-
-def get_date_for_day(week_start_str, day_index):
-    """קבלת תאריך ליום מסוים"""
-    week_start = datetime.strptime(week_start_str, '%Y-%m-%d')
-    date = week_start + timedelta(days=day_index)
-    return date.strftime('%d/%m')
-
-def send_whatsapp(person, day_name):
-    """יצירת קישור WhatsApp"""
-    message = f"""היי {person['name']}! 👋
-
-תזכורת: מחר ({day_name}) תורך לאסוף את זוהר מהגן.
-שעות: 15:30 - 18:00
-
-תודה! 🙏"""
-    
-    encoded_message = urllib.parse.quote(message)
-    
-    if person.get('phone'):
-        phone = ''.join(filter(str.isdigit, person['phone']))
-        url = f"https://wa.me/972{phone}?text={encoded_message}"
-    else:
-        url = f"https://wa.me/?text={encoded_message}"
-    
-    return url
-
-def send_email_notification(person_name, day_name, day_date, week_summary=""):
-    """שליחת התראת אימייל כשמישהו משבץ עצמו - דרך Make.com"""
+def get_google_sheet():
+    """Connect to Google Sheets using service account credentials"""
     try:
-        # Send data to Make.com webhook
-        webhook_data = {
-            "person_name": person_name,
-            "day_name": day_name,
-            "day_date": day_date,
-            "app_url": APP_URL,
-            "to_email": ADMIN_EMAIL
-        }
+        # Load credentials from Streamlit secrets
+        creds_dict = st.secrets["google_credentials"]
         
-        # Debug info
-        st.info(f"🔄 מנסה לשלוח אימייל ל-{ADMIN_EMAIL}...")
+        # Set up the credentials
+        scope = ['https://spreadsheets.google.com/feeds',
+                 'https://www.googleapis.com/auth/drive']
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
         
-        response = requests.post(
-            MAKE_WEBHOOK_URL,
-            json=webhook_data,
-            headers={"Content-Type": "application/json"},
-            timeout=10
-        )
+        # Open the specific spreadsheet
+        sheet_id = st.secrets["sheet_id"]
+        spreadsheet = client.open_by_key(sheet_id)
         
-        if response.status_code == 200:
-            st.success("✅ אימייל נשלח בהצלחה!")
-            return True
-        else:
-            st.warning(f"⚠️ אימייל לא נשלח (קוד: {response.status_code}). השיבוץ נשמר בכל זאת.")
+        return spreadsheet
+    except Exception as e:
+        st.error(f"שגיאה בחיבור ל-Google Sheets: {str(e)}")
+        return None
+
+# ===========================
+# Data Management Functions
+# ===========================
+
+def load_people():
+    """Load people from Google Sheets"""
+    try:
+        spreadsheet = get_google_sheet()
+        if not spreadsheet:
+            return []
+        
+        worksheet = spreadsheet.worksheet("People")
+        records = worksheet.get_all_records()
+        
+        people = []
+        for record in records:
+            if record.get('name'):  # Only add if name exists
+                people.append({
+                    'name': record['name'],
+                    'phone': record.get('phone', '')
+                })
+        
+        return people
+    except Exception as e:
+        st.error(f"שגיאה בטעינת רשימת אנשים: {str(e)}")
+        return []
+
+def save_person(name, phone):
+    """Save a new person to Google Sheets"""
+    try:
+        spreadsheet = get_google_sheet()
+        if not spreadsheet:
             return False
-            
-    except requests.exceptions.Timeout:
-        st.warning("⚠️ זמן תפוגה בשליחת אימייל (10 שניות). השיבוץ נשמר בכל זאת.")
+        
+        worksheet = spreadsheet.worksheet("People")
+        worksheet.append_row([name, phone])
+        return True
+    except Exception as e:
+        st.error(f"שגיאה בשמירת איש קשר: {str(e)}")
         return False
-    except requests.exceptions.RequestException as e:
-        st.warning(f"⚠️ שגיאת רשת: {str(e)[:100]}. השיבוץ נשמר בכל זאת.")
+
+def delete_person(name):
+    """Delete a person from Google Sheets"""
+    try:
+        spreadsheet = get_google_sheet()
+        if not spreadsheet:
+            return False
+        
+        worksheet = spreadsheet.worksheet("People")
+        records = worksheet.get_all_records()
+        
+        # Find the row to delete (row numbers start at 2 because row 1 is header)
+        for idx, record in enumerate(records, start=2):
+            if record['name'] == name:
+                worksheet.delete_rows(idx)
+                return True
+        
         return False
     except Exception as e:
-        st.warning(f"⚠️ שגיאה כללית: {str(e)[:100]}. השיבוץ נשמר בכל זאת.")
+        st.error(f"שגיאה במחיקת איש קשר: {str(e)}")
         return False
 
-# Initialize session state
-if 'week_offset' not in st.session_state:
-    st.session_state.week_offset = 0
+def load_schedule(week_start):
+    """Load schedule for a specific week from Google Sheets"""
+    try:
+        spreadsheet = get_google_sheet()
+        if not spreadsheet:
+            return {}
+        
+        worksheet = spreadsheet.worksheet("Schedule")
+        records = worksheet.get_all_records()
+        
+        schedule = {}
+        for record in records:
+            if record.get('week_start') == week_start:
+                day_idx = record.get('day_index')
+                if day_idx is not None:
+                    schedule[day_idx] = {
+                        'person_name': record.get('person_name', ''),
+                        'person_phone': record.get('person_phone', '')
+                    }
+        
+        return schedule
+    except Exception as e:
+        st.error(f"שגיאה בטעינת לוח שבועי: {str(e)}")
+        return {}
 
-if 'admin_mode' not in st.session_state:
-    st.session_state.admin_mode = False
+def save_assignment(week_start, day_index, person_name, person_phone):
+    """Save an assignment to Google Sheets"""
+    try:
+        spreadsheet = get_google_sheet()
+        if not spreadsheet:
+            return False
+        
+        worksheet = spreadsheet.worksheet("Schedule")
+        
+        # First, try to find and delete existing assignment for this week and day
+        records = worksheet.get_all_records()
+        for idx, record in enumerate(records, start=2):
+            if record.get('week_start') == week_start and record.get('day_index') == day_index:
+                worksheet.delete_rows(idx)
+                break
+        
+        # Add new assignment
+        worksheet.append_row([week_start, day_index, person_name, person_phone])
+        return True
+    except Exception as e:
+        st.error(f"שגיאה בשמירת שיבוץ: {str(e)}")
+        return False
 
-if 'show_people_section' not in st.session_state:
-    st.session_state.show_people_section = False
+def clear_assignment(week_start, day_index):
+    """Clear an assignment from Google Sheets"""
+    try:
+        spreadsheet = get_google_sheet()
+        if not spreadsheet:
+            return False
+        
+        worksheet = spreadsheet.worksheet("Schedule")
+        records = worksheet.get_all_records()
+        
+        for idx, record in enumerate(records, start=2):
+            if record.get('week_start') == week_start and record.get('day_index') == day_index:
+                worksheet.delete_rows(idx)
+                return True
+        
+        return True  # Return True even if not found (it's already cleared)
+    except Exception as e:
+        st.error(f"שגיאה במחיקת שיבוץ: {str(e)}")
+        return False
 
-# Auto-reset to current week if it's a new day
-if 'last_check_date' not in st.session_state:
-    st.session_state.last_check_date = datetime.now().date()
-    st.session_state.week_offset = 0
-elif st.session_state.last_check_date != datetime.now().date():
-    # New day - reset to current week
-    st.session_state.last_check_date = datetime.now().date()
-    st.session_state.week_offset = 0
+# ===========================
+# Helper Functions
+# ===========================
 
-# Load data
-data = load_data()
-people = data.get('people', [])
-schedule = data.get('schedule', {})
+def get_week_start(date):
+    """Get the Monday of the week for a given date"""
+    days_since_monday = date.weekday()
+    monday = date - timedelta(days=days_since_monday)
+    return monday.strftime("%Y-%m-%d")
 
-# Get current week
-current_week = get_week_start(st.session_state.week_offset)
+def get_week_dates(week_start_str):
+    """Get all dates for the week starting from week_start"""
+    week_start = datetime.strptime(week_start_str, "%Y-%m-%d")
+    return [(week_start + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
 
-# Header
-st.markdown("# מי מבלה עם זוהר היום 👦")
-st.markdown('<div class="subtitle">שעות: 15:30 - 18:00 | ימים א\'-ה\'</div>', unsafe_allow_html=True)
+def get_day_name(date_str):
+    """Convert date string to Hebrew day name"""
+    date = datetime.strptime(date_str, "%Y-%m-%d")
+    days = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"]
+    return days[date.weekday() + 1] if date.weekday() < 6 else days[0]
 
-# Check for empty days and show alert
-days = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי']
-empty_days = []
-for i in range(5):
-    week_day_key = f"{current_week}_{i}"
-    if week_day_key not in schedule:
-        empty_days.append(days[i])
+# ===========================
+# UI Functions
+# ===========================
 
-if empty_days:
-    if len(empty_days) == 5:
-        st.error("⚠️ **שימו לב!** כל השבוע עדיין פנוי - צריך לשבץ!")
-    elif len(empty_days) == 1:
-        st.warning(f"⚠️ **שימו לב!** יום **{empty_days[0]}** עדיין פנוי")
-    else:
-        empty_list = ", ".join(empty_days)
-        st.warning(f"⚠️ **שימו לב!** **{len(empty_days)} ימים** עדיין פנויים: {empty_list}")
-else:
-    st.success("✅ מעולה! כל השבוע מאויש!")
-
-# Week navigation
-col_prev, col_week, col_next = st.columns([1, 3, 1])
-
-with col_prev:
-    if st.button("◀ שבוע קודם", use_container_width=True):
-        st.session_state.week_offset -= 1
-        st.rerun()
-
-with col_week:
-    st.markdown(f'<div class="week-info">{format_week_range(current_week)}</div>', unsafe_allow_html=True)
-
-with col_next:
-    if st.button("שבוע הבא ▶", use_container_width=True):
-        st.session_state.week_offset += 1
-        st.rerun()
-
-# Quick status summary
-col_status1, col_status2, col_status3 = st.columns(3)
-assigned_count = len([i for i in range(5) if f"{current_week}_{i}" in schedule])
-empty_count = 5 - assigned_count
-
-with col_status1:
-    st.metric("ימים מאוישים", f"{assigned_count}/5")
-with col_status2:
-    st.metric("ימים פנויים", empty_count)
-with col_status3:
-    if empty_count == 0:
-        st.metric("סטטוס", "✅ מלא")
-    elif empty_count <= 2:
-        st.metric("סטטוס", "⚠️ חסר")
-    else:
-        st.metric("סטטוס", "❌ ריק")
-
-# People management (admin only)
-with st.expander("👨‍👩‍👧 ניהול אנשים (מנהל בלבד)", expanded=st.session_state.show_people_section):
+def admin_settings():
+    """Admin settings page for managing people"""
+    st.header("⚙️ הגדרות מנהל")
     
-    # Admin authentication
-    if not st.session_state.admin_mode:
-        password = st.text_input("סיסמת מנהל:", type="password", key="admin_password_input")
+    # Password protection
+    if 'admin_authenticated' not in st.session_state:
+        st.session_state.admin_authenticated = False
+    
+    if not st.session_state.admin_authenticated:
+        password = st.text_input("סיסמת מנהל:", type="password")
         if st.button("כניסה"):
-            if password == ADMIN_PASSWORD:
-                st.session_state.admin_mode = True
-                st.session_state.show_people_section = True
+            if password == st.secrets.get("admin_password", "1234"):
+                st.session_state.admin_authenticated = True
                 st.rerun()
             else:
                 st.error("סיסמה שגויה!")
-    else:
-        st.success("מצב מנהל פעיל ✓")
+        return
+    
+    st.success("התחברת כמנהל")
+    
+    # Load existing people
+    people = load_people()
+    
+    st.subheader("➕ הוסף איש קשר חדש")
+    with st.form("add_person_form"):
+        new_name = st.text_input("שם:")
+        new_phone = st.text_input("טלפון:")
+        submit = st.form_submit_button("הוסף")
         
-        # Add person
-        col1, col2, col3 = st.columns([2, 2, 1])
-        with col1:
-            new_name = st.text_input("שם:", key="new_person_name")
-        with col2:
-            new_phone = st.text_input("טלפון (אופציונלי):", key="new_person_phone")
-        with col3:
-            st.write("")
-            st.write("")
-            if st.button("➕ הוסף", use_container_width=True):
-                if new_name:
-                    people.append({'name': new_name, 'phone': new_phone})
-                    data['people'] = people
-                    save_data(data)
-                    st.success(f"{new_name} נוסף בהצלחה!")
-                    st.rerun()
-                else:
-                    st.error("נא להזין שם")
-        
-        # Show people list
-        if people:
-            st.write("**רשימת אנשים:**")
-            for i, person in enumerate(people):
-                col_name, col_delete = st.columns([4, 1])
-                with col_name:
-                    phone_text = f" • {person['phone']}" if person.get('phone') else ""
-                    st.write(f"👤 {person['name']}{phone_text}")
-                with col_delete:
-                    if st.button("✕", key=f"delete_{i}"):
-                        people.pop(i)
-                        data['people'] = people
-                        save_data(data)
+        if submit and new_name:
+            if save_person(new_name, new_phone):
+                st.success(f"✅ {new_name} נוסף בהצלחה!")
+                st.rerun()
+    
+    st.subheader("👥 רשימת אנשי קשר")
+    if people:
+        for person in people:
+            col1, col2, col3 = st.columns([3, 2, 1])
+            with col1:
+                st.write(f"**{person['name']}**")
+            with col2:
+                st.write(person.get('phone', ''))
+            with col3:
+                if st.button("🗑️", key=f"delete_{person['name']}"):
+                    if delete_person(person['name']):
+                        st.success(f"✅ {person['name']} נמחק!")
                         st.rerun()
-        else:
-            st.info("עדיין לא הוספת אנשים")
-        
-        # Logout
-        if st.button("יציאה ממצב מנהל"):
-            st.session_state.admin_mode = False
-            st.session_state.show_people_section = False
+    else:
+        st.info("אין אנשי קשר. הוסף את הראשון!")
+    
+    if st.button("🚪 התנתק"):
+        st.session_state.admin_authenticated = False
+        st.rerun()
+
+def schedule_view():
+    """Main schedule view"""
+    st.header("📅 לוח שבועי - מי אוסף את זוהר?")
+    
+    # Week navigation
+    if 'current_week_offset' not in st.session_state:
+        st.session_state.current_week_offset = 0
+    
+    col1, col2, col3 = st.columns([1, 3, 1])
+    with col1:
+        if st.button("◀️ שבוע קודם"):
+            st.session_state.current_week_offset -= 1
             st.rerun()
-
-st.markdown("---")
-
-# Schedule display
-st.markdown("### 📅 לוח השבוע")
-
-days = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי']
-
-# Display days in grid
-cols = st.columns(5)
-
-# Display days 0-4 (Sunday to Friday) in columns 0-4
-# On desktop: appears left-to-right
-# On mobile: appears top-to-bottom in order
-for day_index in range(5):
-    with cols[day_index]:
-        day_date = get_date_for_day(current_week, day_index)
-        week_day_key = f"{current_week}_{day_index}"
-        assigned = schedule.get(week_day_key)
-        is_available = not assigned
+    with col2:
+        today = datetime.now()
+        current_week = today + timedelta(weeks=st.session_state.current_week_offset)
+        week_start_str = get_week_start(current_week)
+        week_dates = get_week_dates(week_start_str)
         
-        # Day card
-        card_class = "available" if is_available else "taken"
-        status_class = "status-available" if is_available else "status-taken"
+        week_start_date = datetime.strptime(week_dates[0], "%Y-%m-%d")
+        week_end_date = datetime.strptime(week_dates[6], "%Y-%m-%d")
+        st.markdown(f"### {week_start_date.strftime('%d/%m')} - {week_end_date.strftime('%d/%m/%Y')}")
+    with col3:
+        if st.button("שבוע הבא ▶️"):
+            st.session_state.current_week_offset += 1
+            st.rerun()
+    
+    # Load people and schedule
+    people = load_people()
+    schedule = load_schedule(week_start_str)
+    
+    if not people:
+        st.warning("⚠️ אין אנשי קשר במערכת. לך להגדרות מנהל כדי להוסיף.")
+        return
+    
+    # Display schedule
+    st.markdown("---")
+    
+    days = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"]
+    
+    for day_idx, (day_name, date_str) in enumerate(zip(days, week_dates)):
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+        formatted_date = date_obj.strftime("%d/%m")
         
-        st.markdown(f"""
-        <div class="day-card {card_class}">
-            <div class="day-name">{days[day_index]}</div>
-            <div class="day-date">{day_date}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"### {day_name} - {formatted_date}")
         
-        if is_available:
-            st.markdown(f'<div class="day-status {status_class}">✅ זמין</div>', unsafe_allow_html=True)
-            
-            # Select person
-            if people:
-                selected = st.selectbox(
-                    "בחר מי יאסף:",
+        # Check if already assigned
+        assigned = schedule.get(day_idx)
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            if assigned:
+                st.success(f"✅ **{assigned['person_name']}** אוסף")
+                if assigned.get('person_phone'):
+                    st.caption(f"📞 {assigned['person_phone']}")
+            else:
+                # Selection
+                selected_person = st.selectbox(
+                    "בחר מי אוסף:",
                     [""] + [p['name'] for p in people],
-                    key=f"select_{day_index}",
-                    label_visibility="collapsed"
+                    key=f"select_{day_idx}_{week_start_str}"
                 )
                 
-                if selected and st.button("✓ שבץ", key=f"assign_{day_index}", use_container_width=True):
-                    person = next(p for p in people if p['name'] == selected)
-                    schedule[week_day_key] = person
-                    data['schedule'] = schedule
-                    save_data(data)
-                    
-                    # Send email notification
-                    day_date_str = get_date_for_day(current_week, day_index)
-                    if send_email_notification(selected, days[day_index], day_date_str):
-                        st.success(f"✅ {selected} משובץ ליום {days[day_index]}! (אימייל נשלח)")
-                    else:
-                        st.success(f"✅ {selected} משובץ ליום {days[day_index]}!")
-                    
-                    st.rerun()
-            else:
-                st.warning("אין אנשים ברשימה")
-        else:
-            st.markdown(f'<div class="day-status {status_class}">👤 {assigned["name"]}</div>', unsafe_allow_html=True)
-            
-            # WhatsApp button
-            whatsapp_url = send_whatsapp(assigned, days[day_index])
-            st.markdown(f'<a href="{whatsapp_url}" target="_blank"><button style="width:100%; background:#25D366; color:white; border:none; padding:0.5rem; border-radius:8px; cursor:pointer; font-weight:600; margin:0.3rem 0;">📱 שלח תזכורת</button></a>', unsafe_allow_html=True)
-            
-            # Clear button (admin only)
-            if st.session_state.admin_mode:
-                if st.button("ביטול", key=f"clear_{day_index}", use_container_width=True):
-                    del schedule[week_day_key]
-                    data['schedule'] = schedule
-                    save_data(data)
-                    st.rerun()
+                if selected_person and st.button("שבץ", key=f"assign_{day_idx}_{week_start_str}"):
+                    person = next((p for p in people if p['name'] == selected_person), None)
+                    if person:
+                        if save_assignment(week_start_str, day_idx, person['name'], person.get('phone', '')):
+                            st.success(f"✅ {person['name']} שובץ ליום {day_name}!")
+                            st.rerun()
+        
+        with col2:
+            if assigned:
+                if st.button("❌ בטל", key=f"clear_{day_idx}_{week_start_str}"):
+                    if clear_assignment(week_start_str, day_idx):
+                        st.success("השיבוץ בוטל!")
+                        st.rerun()
+        
+        st.markdown("---")
 
-# Reset week (admin only)
-if st.session_state.admin_mode:
-    st.markdown("---")
-    if st.button("🔄 אפס שבוע (מחיקת כל השיבוצים)", use_container_width=True):
-        if st.checkbox("אני בטוח שאני רוצה למחוק הכל"):
-            schedule = {}
-            data['schedule'] = schedule
-            save_data(data)
-            st.success("השבוע אופס בהצלחה!")
-            st.rerun()
+# ===========================
+# Main App
+# ===========================
 
-# Footer
-st.markdown("---")
-st.markdown('<div style="text-align: center; color: #64748b; font-size: 0.9rem;">אפליקציית תזמון איסוף מהגן • נבנתה עם ❤️</div>', unsafe_allow_html=True)
+def main():
+    st.set_page_config(
+        page_title="מי אוסף את זוהר?",
+        page_icon="👶",
+        layout="wide"
+    )
+    
+    st.title("👶 מי אוסף את זוהר מהגן?")
+    
+    # Sidebar navigation
+    page = st.sidebar.radio("ניווט:", ["📅 לוח שבועי", "⚙️ הגדרות מנהל"])
+    
+    if page == "📅 לוח שבועי":
+        schedule_view()
+    else:
+        admin_settings()
+
+if __name__ == "__main__":
+    main()
