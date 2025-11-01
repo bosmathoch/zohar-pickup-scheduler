@@ -358,28 +358,47 @@ def schedule_view():
         st.warning("⚠️ אין אנשי קשר במערכת. לך להגדרות מנהל כדי להוסיף.")
         return
     
-    # Add "Send reminders" button at the top
+    # Add "Send reminders" section at the top
     st.markdown("---")
-    if st.button("📲 שלח תזכורות WhatsApp לכל המשובצים השבוע"):
-        reminders_sent = 0
-        for day_idx in range(6):  # Only weekdays
-            assigned = schedule.get(day_idx)
-            if assigned and assigned.get('person_phone'):
-                day_name = days[day_idx]
-                date_str = week_dates[day_idx]
-                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-                formatted_date = date_obj.strftime("%d/%m")
-                
-                whatsapp_message = f"היי! תזכורת שאת/ה מבלה עם זוהר ביום {day_name} ({formatted_date}). תודה! 😊"
-                whatsapp_link = get_whatsapp_link(assigned['person_phone'], whatsapp_message)
-                
-                st.markdown(f"💬 [{assigned['person_name']} - {day_name}]({whatsapp_link})")
-                reminders_sent += 1
+    st.subheader("📲 שליחת תזכורות WhatsApp")
+    
+    # Collect all assignments for this week
+    assignments = []
+    for day_idx in range(6):  # Only weekdays
+        assigned = schedule.get(day_idx)
+        if assigned and assigned.get('person_phone'):
+            date_str = week_dates[day_idx]
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+            formatted_date = date_obj.strftime("%d/%m")
+            day_name = days[day_idx]
+            
+            assignments.append({
+                'name': assigned['person_name'],
+                'phone': assigned['person_phone'],
+                'day_name': day_name,
+                'date': formatted_date
+            })
+    
+    if assignments:
+        st.info(f"📋 {len(assignments)} שיבוצים השבוע")
         
-        if reminders_sent == 0:
-            st.info("אין שיבוצים השבוע לשלוח תזכורות.")
-        else:
-            st.success(f"✅ מוכן לשלוח {reminders_sent} תזכורות! לחץ על הקישורים למעלה.")
+        # Show individual WhatsApp buttons
+        for assignment in assignments:
+            whatsapp_message = f"היי! תזכורת שאת/ה מבלה עם זוהר ביום {assignment['day_name']} ({assignment['date']}). תודה! 😊"
+            whatsapp_link = get_whatsapp_link(assignment['phone'], whatsapp_message)
+            
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.write(f"**{assignment['name']}** - {assignment['day_name']} ({assignment['date']})")
+            with col2:
+                st.markdown(f"[💬 WhatsApp]({whatsapp_link})")
+        
+        # Option to send to all
+        st.markdown("---")
+        if st.button("📱 פתח את כל התזכורות ב-WhatsApp"):
+            st.markdown("### לחץ על הקישורים למעלה ↑")
+    else:
+        st.info("אין שיבוצים עם מספרי טלפון השבוע.")
     
     # Display schedule
     st.markdown("---")
