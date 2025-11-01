@@ -17,7 +17,7 @@ APP_URL = st.secrets.get("app_url", "https://your-app.streamlit.app")
 # ===========================
 
 def send_email_notification(person_name, person_phone, day_name, day_date):
-    """Send email notification using Make.com webhook"""
+    """Send email notification using Make.com webhook - TO ADMIN"""
     if not MAKE_WEBHOOK_URL:
         # If webhook not configured, skip silently
         return
@@ -44,6 +44,49 @@ def send_email_notification(person_name, person_phone, day_name, day_date):
         
     except Exception as e:
         # Fail silently - don't block the assignment
+        pass
+
+def send_email_to_person(person_name, person_email, day_name, day_date):
+    """Send confirmation email to the assigned person"""
+    if not person_email or not MAKE_WEBHOOK_URL:
+        return
+    
+    try:
+        # Prepare email content
+        email_subject = f"שיבוץ לבילוי עם זוהר - {day_name}, {day_date}"
+        email_body = f"""שלום!
+
+{person_name} נרשם לבלות עם זוהר.
+
+יום: {day_name}
+תאריך: {day_date}
+{APP_URL}
+
+מציעה להוסיף ליומן, ובכל מקרה תישלח תזכורת בוואטס-אפ בהמשך.
+
+תודה ותהנו!"""
+        
+        # Send to Make.com with special flag for person email
+        webhook_data = {
+            "to_person": True,
+            "person_email": person_email,
+            "person_name": person_name,
+            "day_name": day_name,
+            "day_date": day_date,
+            "app_url": APP_URL,
+            "email_subject": email_subject,
+            "email_body": email_body
+        }
+        
+        requests.post(
+            MAKE_WEBHOOK_URL,
+            json=webhook_data,
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+    except Exception as e:
+        # Fail silently
         pass
 
 def get_whatsapp_link(phone, message):
@@ -100,22 +143,47 @@ def load_people():
             return []
         
         worksheet = spreadsheet.worksheet("People")
-        records = worksheet.get_all_records()
         
+        # Get all values as a list of lists
+        all_values = worksheet.get_all_values()
+        
+        if not all_values or len(all_values) < 1:
+            return []
+        
+        # First row is headers
+        headers = all_values[0]
+        
+        # Find column indices
+        try:
+            name_idx = headers.index('name')
+            phone_idx = headers.index('phone')
+            # Email column is optional - might not exist yet
+            email_idx = headers.index('email') if 'email' in headers else None
+        except ValueError as e:
+            st.error(f"חסרות כותרות בטאב People: {str(e)}")
+            return []
+        
+        # Build people list
         people = []
-        for record in records:
-            if record.get('name'):  # Only add if name exists
-                people.append({
-                    'name': record['name'],
-                    'phone': record.get('phone', '')
-                })
+        for row in all_values[1:]:  # Skip header row
+            if len(row) > name_idx and row[name_idx]:
+                person = {
+                    'name': row[name_idx],
+                    'phone': row[phone_idx] if len(row) > phone_idx else ''
+                }
+                # Add email if column exists
+                if email_idx is not None and len(row) > email_idx:
+                    person['email'] = row[email_idx]
+                else:
+                    person['email'] = ''
+                people.append(person)
         
         return people
     except Exception as e:
         st.error(f"שגיאה בטעינת רשימת אנשים: {str(e)}")
         return []
 
-def save_person(name, phone):
+def save_person(name, phone, email=''):
     """Save a new person to Google Sheets"""
     try:
         spreadsheet = get_google_sheet()
@@ -123,7 +191,7 @@ def save_person(name, phone):
             return False
         
         worksheet = spreadsheet.worksheet("People")
-        worksheet.append_row([name, phone])
+        worksheet.append_row([name, phone, email])
         return True
     except Exception as e:
         st.error(f"שגיאה בשמירת איש קשר: {str(e)}")
@@ -174,6 +242,8 @@ def load_schedule(week_start):
             day_index_idx = headers.index('day_index')
             person_name_idx = headers.index('person_name')
             person_phone_idx = headers.index('person_phone')
+            # Email column is optional
+            person_email_idx = headers.index('person_email') if 'person_email' in headers else None
         except ValueError as e:
             st.error(f"חסרות כותרות בטאב Schedule: {str(e)}")
             return {}
@@ -185,10 +255,16 @@ def load_schedule(week_start):
                 if row[week_start_idx] == week_start and row[day_index_idx]:
                     try:
                         day_idx = int(row[day_index_idx])
-                        schedule[day_idx] = {
+                        assignment = {
                             'person_name': row[person_name_idx] if len(row) > person_name_idx else '',
                             'person_phone': row[person_phone_idx] if len(row) > person_phone_idx else ''
                         }
+                        # Add email if column exists
+                        if person_email_idx is not None and len(row) > person_email_idx:
+                            assignment['person_email'] = row[person_email_idx]
+                        else:
+                            assignment['person_email'] = ''
+                        schedule[day_idx] = assignment
                     except (ValueError, IndexError):
                         continue
         
@@ -197,7 +273,7 @@ def load_schedule(week_start):
         st.error(f"שגיאה בטעינת לוח שבועי: {str(e)}")
         return {}
 
-def save_assignment(week_start, day_index, person_name, person_phone):
+def save_assignment(week_start, day_index, person_name, person_phone, person_email=''):
     """Save an assignment to Google Sheets"""
     try:
         spreadsheet = get_google_sheet()
@@ -207,14 +283,23 @@ def save_assignment(week_start, day_index, person_name, person_phone):
         worksheet = spreadsheet.worksheet("Schedule")
         
         # First, try to find and delete existing assignment for this week and day
-        records = worksheet.get_all_records()
-        for idx, record in enumerate(records, start=2):
-            if record.get('week_start') == week_start and record.get('day_index') == day_index:
-                worksheet.delete_rows(idx)
-                break
+        all_values = worksheet.get_all_values()
+        if len(all_values) > 1:
+            headers = all_values[0]
+            try:
+                week_start_idx = headers.index('week_start')
+                day_index_idx = headers.index('day_index')
+            except ValueError:
+                pass
+            else:
+                for idx, row in enumerate(all_values[1:], start=2):
+                    if len(row) > max(week_start_idx, day_index_idx):
+                        if row[week_start_idx] == week_start and str(row[day_index_idx]) == str(day_index):
+                            worksheet.delete_rows(idx)
+                            break
         
         # Add new assignment
-        worksheet.append_row([week_start, day_index, person_name, person_phone])
+        worksheet.append_row([week_start, day_index, person_name, person_phone, person_email])
         return True
     except Exception as e:
         st.error(f"שגיאה בשמירת שיבוץ: {str(e)}")
@@ -296,22 +381,25 @@ def admin_settings():
     with st.form("add_person_form"):
         new_name = st.text_input("שם:")
         new_phone = st.text_input("טלפון:")
+        new_email = st.text_input("מייל (אופציונלי):")
         submit = st.form_submit_button("הוסף")
         
         if submit and new_name:
-            if save_person(new_name, new_phone):
+            if save_person(new_name, new_phone, new_email):
                 st.success(f"✅ {new_name} נוסף בהצלחה!")
                 st.rerun()
     
     st.subheader("👥 רשימת אנשי קשר")
     if people:
         for person in people:
-            col1, col2, col3 = st.columns([3, 2, 1])
+            col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
             with col1:
                 st.write(f"**{person['name']}**")
             with col2:
                 st.write(person.get('phone', ''))
             with col3:
+                st.write(person.get('email', ''))
+            with col4:
                 if st.button("🗑️", key=f"delete_{person['name']}"):
                     if delete_person(person['name']):
                         st.success(f"✅ {person['name']} נמחק!")
@@ -438,10 +526,10 @@ def schedule_view():
                 if selected_person and st.button("שבץ", key=f"assign_{day_idx}_{week_start_str}"):
                     person = next((p for p in people if p['name'] == selected_person), None)
                     if person:
-                        if save_assignment(week_start_str, day_idx, person['name'], person.get('phone', '')):
+                        if save_assignment(week_start_str, day_idx, person['name'], person.get('phone', ''), person.get('email', '')):
                             st.success(f"✅ {person['name']} שובץ ליום {day_name}!")
                             
-                            # Send email notification
+                            # Send email notification to admin
                             try:
                                 send_email_notification(
                                     person['name'],
@@ -450,7 +538,19 @@ def schedule_view():
                                     formatted_date
                                 )
                             except Exception as e:
-                                st.warning(f"השיבוץ נשמר, אך לא נשלח מייל: {str(e)}")
+                                pass
+                            
+                            # Send email to assigned person
+                            if person.get('email'):
+                                try:
+                                    send_email_to_person(
+                                        person['name'],
+                                        person['email'],
+                                        day_name,
+                                        formatted_date
+                                    )
+                                except Exception as e:
+                                    pass
                             
                             st.rerun()
         
