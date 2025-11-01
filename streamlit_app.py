@@ -387,7 +387,7 @@ def schedule_view():
         
         # Show individual WhatsApp buttons
         for assignment in assignments:
-            whatsapp_message = f"היי {assignment['name']}! 👋\nרק תזכורת קטנה לפני הבילוי עם זוהר ביום {assignment['day_name']}, {assignment['date']}.\nזוהר כבר מתרגש! 😊\nתודה רבה! ❤️"
+            whatsapp_message = f"היי {assignment['name']}!\nרק תזכורת קטנה לפני הבילוי עם זוהר ביום {assignment['day_name']}, {assignment['date']}.\nזוהר כבר מתרגש!\nתודה רבה!"
             whatsapp_link = get_whatsapp_link(assignment['phone'], whatsapp_message)
             
             col1, col2 = st.columns([3, 1])
@@ -424,7 +424,7 @@ def schedule_view():
                     st.caption(f"📞 {assigned['person_phone']}")
                     
                     # WhatsApp reminder button
-                    whatsapp_message = f"היי {assigned['person_name']}! 👋\nרק תזכורת קטנה לפני הבילוי עם זוהר ביום {day_name}, {formatted_date}.\nזוהר כבר מתרגש! 😊\nתודה רבה! ❤️"
+                    whatsapp_message = f"היי {assigned['person_name']}!\nרק תזכורת קטנה לפני הבילוי עם זוהר ביום {day_name}, {formatted_date}.\nזוהר כבר מתרגש!\nתודה רבה!"
                     whatsapp_link = get_whatsapp_link(assigned['person_phone'], whatsapp_message)
                     st.markdown(f"[💬 שלח תזכורת בWhatsApp]({whatsapp_link})", unsafe_allow_html=True)
             else:
