@@ -3,6 +3,35 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta
 import json
+import urllib.parse
+
+# ===========================
+# Email Configuration
+# ===========================
+
+def send_email_notification(person_name, person_phone, day_name, day_date):
+    """Send email notification using EmailJS"""
+    # This needs to be configured in Streamlit secrets
+    # For now, we'll show a success message
+    # In production, you'd call EmailJS API here
+    pass
+
+def get_whatsapp_link(phone, message):
+    """Generate WhatsApp link"""
+    # Remove any non-numeric characters from phone
+    clean_phone = ''.join(filter(str.isdigit, phone))
+    
+    # Add Israel country code if not present
+    if not clean_phone.startswith('972'):
+        if clean_phone.startswith('0'):
+            clean_phone = '972' + clean_phone[1:]
+        else:
+            clean_phone = '972' + clean_phone
+    
+    # URL encode the message
+    encoded_message = urllib.parse.quote(message)
+    
+    return f"https://wa.me/{clean_phone}?text={encoded_message}"
 
 # ===========================
 # Google Sheets Configuration
@@ -99,7 +128,10 @@ def load_schedule(week_start):
             return {}
         
         worksheet = spreadsheet.worksheet("Schedule")
-        records = worksheet.get_all_records()
+        
+        # Use expected_headers to avoid duplicate column issues
+        expected_headers = ['week_start', 'day_index', 'person_name', 'person_phone']
+        records = worksheet.get_all_records(expected_headers=expected_headers)
         
         schedule = {}
         for record in records:
@@ -164,10 +196,11 @@ def clear_assignment(week_start, day_index):
 # ===========================
 
 def get_week_start(date):
-    """Get the Monday of the week for a given date"""
-    days_since_monday = date.weekday()
-    monday = date - timedelta(days=days_since_monday)
-    return monday.strftime("%Y-%m-%d")
+    """Get the Sunday of the week for a given date"""
+    # weekday(): Monday=0, Sunday=6
+    days_since_sunday = (date.weekday() + 1) % 7
+    sunday = date - timedelta(days=days_since_sunday)
+    return sunday.strftime("%Y-%m-%d")
 
 def get_week_dates(week_start_str):
     """Get all dates for the week starting from week_start"""
@@ -178,7 +211,10 @@ def get_day_name(date_str):
     """Convert date string to Hebrew day name"""
     date = datetime.strptime(date_str, "%Y-%m-%d")
     days = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"]
-    return days[date.weekday() + 1] if date.weekday() < 6 else days[0]
+    # weekday(): Monday=0, Sunday=6
+    # We want Sunday=0, so we use (weekday + 1) % 7
+    day_index = (date.weekday() + 1) % 7
+    return days[day_index]
 
 # ===========================
 # UI Functions
@@ -240,7 +276,7 @@ def admin_settings():
 
 def schedule_view():
     """Main schedule view"""
-    st.header("📅 לוח שבועי - מי אוסף את זוהר?")
+    st.header("📅 לוח שבועי - מי מבלה עם זוהר?")
     
     # Week navigation
     if 'current_week_offset' not in st.session_state:
@@ -291,9 +327,14 @@ def schedule_view():
         
         with col1:
             if assigned:
-                st.success(f"✅ **{assigned['person_name']}** אוסף")
+                st.success(f"✅ **{assigned['person_name']}** מבלה עם זוהר")
                 if assigned.get('person_phone'):
                     st.caption(f"📞 {assigned['person_phone']}")
+                    
+                    # WhatsApp reminder button
+                    whatsapp_message = f"היי! תזכורת שאת/ה מבלה עם זוהר ביום {day_name} ({formatted_date}). תודה! 😊"
+                    whatsapp_link = get_whatsapp_link(assigned['person_phone'], whatsapp_message)
+                    st.markdown(f"[💬 שלח תזכורת בWhatsApp]({whatsapp_link})", unsafe_allow_html=True)
             else:
                 # Selection
                 selected_person = st.selectbox(
@@ -307,6 +348,18 @@ def schedule_view():
                     if person:
                         if save_assignment(week_start_str, day_idx, person['name'], person.get('phone', '')):
                             st.success(f"✅ {person['name']} שובץ ליום {day_name}!")
+                            
+                            # Send email notification
+                            try:
+                                send_email_notification(
+                                    person['name'],
+                                    person.get('phone', ''),
+                                    day_name,
+                                    formatted_date
+                                )
+                            except Exception as e:
+                                st.warning(f"השיבוץ נשמר, אך לא נשלח מייל: {str(e)}")
+                            
                             st.rerun()
         
         with col2:
@@ -324,12 +377,12 @@ def schedule_view():
 
 def main():
     st.set_page_config(
-        page_title="מי אוסף את זוהר?",
+        page_title="מי מבלה עם זוהר היום?",
         page_icon="👶",
         layout="wide"
     )
     
-    st.title("👶 מי אוסף את זוהר מהגן?")
+    st.title("👶 מי מבלה עם זוהר היום?")
     
     # Sidebar navigation
     page = st.sidebar.radio("ניווט:", ["📅 לוח שבועי", "⚙️ הגדרות מנהל"])
