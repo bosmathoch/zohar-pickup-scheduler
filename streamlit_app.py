@@ -4,17 +4,47 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta
 import json
 import urllib.parse
+import requests
+
+# ===========================
+# Configuration from Secrets
+# ===========================
+MAKE_WEBHOOK_URL = st.secrets.get("make_webhook_url", "")
+APP_URL = st.secrets.get("app_url", "https://your-app.streamlit.app")
 
 # ===========================
 # Email Configuration
 # ===========================
 
 def send_email_notification(person_name, person_phone, day_name, day_date):
-    """Send email notification using EmailJS"""
-    # This needs to be configured in Streamlit secrets
-    # For now, we'll show a success message
-    # In production, you'd call EmailJS API here
-    pass
+    """Send email notification using Make.com webhook"""
+    if not MAKE_WEBHOOK_URL:
+        # If webhook not configured, skip silently
+        return
+    
+    try:
+        # Send data to Make.com webhook
+        webhook_data = {
+            "person_name": person_name,
+            "day_name": day_name,
+            "day_date": day_date,
+            "person_phone": person_phone,
+            "app_url": APP_URL
+        }
+        
+        response = requests.post(
+            MAKE_WEBHOOK_URL,
+            json=webhook_data,
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            st.success("📧 מייל נשלח בהצלחה!")
+        
+    except Exception as e:
+        # Fail silently - don't block the assignment
+        pass
 
 def get_whatsapp_link(phone, message):
     """Generate WhatsApp link"""
@@ -129,19 +159,38 @@ def load_schedule(week_start):
         
         worksheet = spreadsheet.worksheet("Schedule")
         
-        # Use expected_headers to avoid duplicate column issues
-        expected_headers = ['week_start', 'day_index', 'person_name', 'person_phone']
-        records = worksheet.get_all_records(expected_headers=expected_headers)
+        # Get all values as a list of lists
+        all_values = worksheet.get_all_values()
         
+        if not all_values or len(all_values) < 1:
+            return {}
+        
+        # First row is headers
+        headers = all_values[0]
+        
+        # Find column indices
+        try:
+            week_start_idx = headers.index('week_start')
+            day_index_idx = headers.index('day_index')
+            person_name_idx = headers.index('person_name')
+            person_phone_idx = headers.index('person_phone')
+        except ValueError as e:
+            st.error(f"חסרות כותרות בטאב Schedule: {str(e)}")
+            return {}
+        
+        # Build schedule dictionary
         schedule = {}
-        for record in records:
-            if record.get('week_start') == week_start:
-                day_idx = record.get('day_index')
-                if day_idx is not None:
-                    schedule[day_idx] = {
-                        'person_name': record.get('person_name', ''),
-                        'person_phone': record.get('person_phone', '')
-                    }
+        for row in all_values[1:]:  # Skip header row
+            if len(row) > max(week_start_idx, day_index_idx, person_name_idx, person_phone_idx):
+                if row[week_start_idx] == week_start and row[day_index_idx]:
+                    try:
+                        day_idx = int(row[day_index_idx])
+                        schedule[day_idx] = {
+                            'person_name': row[person_name_idx] if len(row) > person_name_idx else '',
+                            'person_phone': row[person_phone_idx] if len(row) > person_phone_idx else ''
+                        }
+                    except (ValueError, IndexError):
+                        continue
         
         return schedule
     except Exception as e:
@@ -309,12 +358,35 @@ def schedule_view():
         st.warning("⚠️ אין אנשי קשר במערכת. לך להגדרות מנהל כדי להוסיף.")
         return
     
+    # Add "Send reminders" button at the top
+    st.markdown("---")
+    if st.button("📲 שלח תזכורות WhatsApp לכל המשובצים השבוע"):
+        reminders_sent = 0
+        for day_idx in range(6):  # Only weekdays
+            assigned = schedule.get(day_idx)
+            if assigned and assigned.get('person_phone'):
+                day_name = days[day_idx]
+                date_str = week_dates[day_idx]
+                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                formatted_date = date_obj.strftime("%d/%m")
+                
+                whatsapp_message = f"היי! תזכורת שאת/ה מבלה עם זוהר ביום {day_name} ({formatted_date}). תודה! 😊"
+                whatsapp_link = get_whatsapp_link(assigned['person_phone'], whatsapp_message)
+                
+                st.markdown(f"💬 [{assigned['person_name']} - {day_name}]({whatsapp_link})")
+                reminders_sent += 1
+        
+        if reminders_sent == 0:
+            st.info("אין שיבוצים השבוע לשלוח תזכורות.")
+        else:
+            st.success(f"✅ מוכן לשלוח {reminders_sent} תזכורות! לחץ על הקישורים למעלה.")
+    
     # Display schedule
     st.markdown("---")
     
-    days = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"]
+    days = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי"]  # Removed Saturday
     
-    for day_idx, (day_name, date_str) in enumerate(zip(days, week_dates)):
+    for day_idx, (day_name, date_str) in enumerate(zip(days, week_dates[:6])):  # Only first 6 days
         date_obj = datetime.strptime(date_str, "%Y-%m-%d")
         formatted_date = date_obj.strftime("%d/%m")
         
@@ -364,10 +436,14 @@ def schedule_view():
         
         with col2:
             if assigned:
-                if st.button("❌ בטל", key=f"clear_{day_idx}_{week_start_str}"):
-                    if clear_assignment(week_start_str, day_idx):
-                        st.success("השיבוץ בוטל!")
-                        st.rerun()
+                # Only show delete button if user is admin
+                if st.session_state.get('admin_authenticated', False):
+                    if st.button("❌ בטל", key=f"clear_{day_idx}_{week_start_str}"):
+                        if clear_assignment(week_start_str, day_idx):
+                            st.success("השיבוץ בוטל!")
+                            st.rerun()
+                else:
+                    st.caption("🔒 רק מנהל יכול לבטל")
         
         st.markdown("---")
 
