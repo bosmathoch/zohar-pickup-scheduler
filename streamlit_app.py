@@ -358,6 +358,9 @@ def schedule_view():
         st.warning("⚠️ אין אנשי קשר במערכת. לך להגדרות מנהל כדי להוסיף.")
         return
     
+    # Define days list
+    days = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי"]
+    
     # Add "Send reminders" section at the top
     st.markdown("---")
     st.subheader("📲 שליחת תזכורות WhatsApp")
@@ -402,8 +405,6 @@ def schedule_view():
     
     # Display schedule
     st.markdown("---")
-    
-    days = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי"]  # Removed Saturday
     
     for day_idx, (day_name, date_str) in enumerate(zip(days, week_dates[:6])):  # Only first 6 days
         date_obj = datetime.strptime(date_str, "%Y-%m-%d")
