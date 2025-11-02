@@ -10,6 +10,7 @@ import requests
 # Configuration from Secrets
 # ===========================
 MAKE_WEBHOOK_URL = st.secrets.get("make_webhook_url", "")
+MAKE_WEBHOOK_URL_PERSON = st.secrets.get("make_webhook_url_person", "")
 APP_URL = st.secrets.get("app_url", "https://your-app.streamlit.app")
 
 # ===========================
@@ -48,38 +49,21 @@ def send_email_notification(person_name, person_phone, day_name, day_date):
 
 def send_email_to_person(person_name, person_email, day_name, day_date):
     """Send confirmation email to the assigned person"""
-    if not person_email or not MAKE_WEBHOOK_URL:
+    if not person_email or not MAKE_WEBHOOK_URL_PERSON:
         return
     
     try:
-        # Prepare email content
-        email_subject = f"שיבוץ לבילוי עם זוהר - {day_name}, {day_date}"
-        email_body = f"""שלום!
-
-{person_name} נרשם לבלות עם זוהר.
-
-יום: {day_name}
-תאריך: {day_date}
-{APP_URL}
-
-מציעה להוסיף ליומן, ובכל מקרה תישלח תזכורת בוואטס-אפ בהמשך.
-
-תודה ותהנו!"""
-        
-        # Send to Make.com with special flag for person email
+        # Send to Make.com webhook for person email
         webhook_data = {
-            "to_person": True,
             "person_email": person_email,
             "person_name": person_name,
             "day_name": day_name,
             "day_date": day_date,
-            "app_url": APP_URL,
-            "email_subject": email_subject,
-            "email_body": email_body
+            "app_url": APP_URL
         }
         
         requests.post(
-            MAKE_WEBHOOK_URL,
+            MAKE_WEBHOOK_URL_PERSON,
             json=webhook_data,
             headers={"Content-Type": "application/json"},
             timeout=10
